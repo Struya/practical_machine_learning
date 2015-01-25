@@ -1,0 +1,181 @@
+---
+title: 'Practical machine learning: writeup'
+author: "Miha Trošt"
+date: "Saturday, January 24, 2015"
+output:
+  html_document:
+    highlight: textmate
+    theme: readable
+---
+
+# Abstract
+
+This document describes the process of building a machine learning algorithm, which in turn was used to predict the manner in which 6 people did barbell lifts (correctly and incorrectly in 5 different ways: A, B, C, D, E). The process consisted of importing fairly large training and small testing datasets, cleaning the training dataset, selecting useful features, filtering rows, subseting the training dataset into subtraining dataset and validating dataset, subsampling the subtraining dataset in order to reduce computation time, building a model, evaluating the model on validating dataset in order to get an idea of out-of-sample error, and predicting above mentioned 20 test cases. 
+
+```{r initial setup, comment="", message=FALSE, warning = FALSE, echo = TRUE, eval = TRUE}
+# libraries used 
+library(dplyr) 
+library(reshape2) 
+library(lubridate) 
+library(stringr)
+library(caret)
+library(randomForest)
+```
+
+## Introduction 
+
+A possibility to collect a large amount of data about personal activity lead to new research areas focused on discriminating between different activities people do. On the other hand, the dataset used in this project was collected for [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201), a study which focused on the quality of executing an activity. Furthermore, the goal of this project was to predict the manner in which 6 people did the exercise (barbell lifts correctly and incorrectly in 5 different ways: A, B, C, D, E).    
+
+### Getting and cleaning data
+
+The process of building a machine learning algorithm consisted of several steps. First, importing fairly large training and small testing datasets, second, removing columns with missing values, third, filtering rows, forth, selecting potentialy useful features.
+
+```{r data_import, comment="", message=FALSE, echo = TRUE, eval = TRUE}
+# data import 
+my_path_to_file <- 
+    "H:/Users/majamiha-s/Documents/GitHub/pract_machine_learning/" 
+
+# training data 
+my_training_file <- 
+    "pml-training.csv" 
+
+pml_train <- 
+    read.csv(str_c(my_path_to_file, my_training_file, sep = ""), 
+             stringsAsFactors = FALSE, 
+             na.strings = c("NA", "#DIV/0!", "")) 
+
+# testing data 
+my_testing_file <- 
+    "pml-testing.csv" 
+
+pml_testing <- 
+    read.csv(str_c(my_path_to_file, my_testing_file, sep = ""), 
+             stringsAsFactors = FALSE, 
+             na.strings = c("NA", "#DIV/0!", "")) 
+```
+
+```{r a_look_at_data, comment="", message=FALSE, echo = TRUE, eval = TRUE}
+# a look at training data 
+tbl_df(pml_train) 
+
+# subseting training data 
+my_pml_train_subset <- 
+    pml_train %>% 
+    filter(new_window == "no") %>% 
+    select(-(X:num_window)) %>% 
+    mutate(classe = as.factor(classe)) %>% 
+    tbl_df(.) 
+
+# finding columns that contain NAs 
+my_any_isnas <- 
+    sapply(my_pml_train_subset, 
+           function(x) any(is.na(x))) 
+
+# selecting useful columns (names) 
+my_pml_train_names <- 
+    names(my_any_isnas[my_any_isnas == FALSE]) 
+
+# my cleaned training data 
+my_pml_train <- 
+    my_pml_train_subset[, my_pml_train_names] %>% 
+    tbl_df(.) 
+
+# split training data on training and validating subsample 
+# 80:20 
+inTraining <- 
+    createDataPartition(my_pml_train$classe, 
+                        p = 0.8, 
+                        list = FALSE) 
+
+```
+
+### Validating process
+
+Training dataset was partitioned into two parts, subtraining dataset, consisting of 80 percent of the training dataset, and validating part with remaining 20 percent. Partitioning was made in order to reduce the training sample size, speed up the computation and get another testing (validating) dataset. However, in order for the computation to be fast, the subtraining dataset had to be reduced much more. Furthermore, after some experimentation with different fractions (0.01, 0.02, 0.05, 0.1,..., 0.5) of subtraining dataset, it turned out that 50 % of the subtraining dataset was enough for the machine learning algorith to be almost 98 % accurate. 
+
+One can set **my_sample_fraction** object (see the source code below) to his likings. It can take the values between 0 and 1.
+
+```{r partitioning_training_set}
+# my fraction 
+my_sample_frac <- 0.01 
+
+# validating subsample (randomly sampled: my_sample_frac) 
+validating <- 
+    my_pml_train[-inTraining, ] %>% 
+    group_by(classe) %>% 
+    sample_frac(., my_sample_frac) %>% 
+    ungroup(.) 
+
+# training subsample (randomly sampled: my_sample_frac) 
+training <- 
+    my_pml_train[inTraining, ] %>% 
+    group_by(classe) %>% 
+    sample_frac(., my_sample_frac) %>% 
+    ungroup(.) 
+
+tbl_df(training)
+```
+
+### Machine learning algorithm and results
+
+The focus of this project was the supervised statistical classification of cases into groups and the goal the best possible prediction. Hence, following the Overview section of [kaggle](https://www.kaggle.com/wiki/RandomForests) website, the method of choice was Random forests. First, the method uses averaging to find a natural balance between variance and bias. Second, it can handle many predictors. Third, it is used for classification. Forth, it produces out of the bag prediction error, and fifth, it is the prevalent method in kaggle classification competitions.  
+
+```{r building_algorithm, comment="", message=FALSE, echo = TRUE, eval = TRUE}
+# tracking time used to build a model 
+start_time <- Sys.time() 
+
+# reproducibility seed
+set.seed(1)
+
+# building a model 
+rf_fit_01 <- train(classe ~ ., 
+                 data = training, 
+                 method = "rf", 
+                 prox = TRUE) 
+
+my_time <- Sys.time() - start_time 
+
+# a look at my model 
+rf_fit_01 
+
+# predict classe variable on validating subsample 
+pred <- 
+    predict(rf_fit_01, validating) 
+
+validating$predRight <- 
+    pred == validating$classe 
+
+# a look at results 
+table(pred, validating$classe) 
+
+# time tracking results 
+round(my_time, 1) 
+```
+
+## Prediction of test cases
+
+Independent test dataset consisted of 20 test cases. The goal of the project was to predict the manner in which 6 people did barbell lifts i.e. classify the cases into class A, B, C, D or E. 
+
+```{r test_cases, comment="", message=FALSE, echo = TRUE, eval = TRUE}
+# prediction on independant test dataset #### 
+my_testing_data <- 
+    pml_testing[, which(names(pml_testing) %in% names(training))] 
+
+# predict classe variable on test dataset 
+pred_testing_data <- 
+    predict(rf_fit_01, my_testing_data) %>% 
+    as.character(.) 
+```
+
+The specified machine learning algorithm yealds the following results:
+
+```{r prediction_results,  comment="", message=FALSE, echo = TRUE, eval = TRUE}
+
+# results
+pred_testing_data
+
+```
+
+## Conclusion
+
+The process of building a machine learning algorithm for predicting the manner in which 6 people did barbell lifts consisted of getting and cleaning data, building the algorithm and estimating the out of sample error. The algorithm of choice was random forest that appeared to be the most suited for the problem at hand. By experimenting with sample size of training data, it turned out that around 40 % of the original training dataset was enough to train the algorithm to be almost 98 % accurate on validating test dataset and 100 % on 20 test cases.    
